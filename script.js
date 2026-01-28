@@ -1,5 +1,5 @@
 // === CONFIG ===
-const API_BASE = "https://api.sc.hannesrieder.ch"; // dein Worker (wichtig!)
+const API_BASE = "https://api.sc.hannesrieder.ch"; // dein Worker
 const MAX_MB_DEFAULT = 8; // wird auch serverseitig geprüft
 const MAX_BYTES_DEFAULT = MAX_MB_DEFAULT * 1024 * 1024;
 
@@ -25,10 +25,11 @@ const copyViewBtn = el("copyViewBtn");
 const imgView = el("imgView");
 
 const maxHint = el("maxhint");
-maxHint.textContent = `max ${MAX_MB_DEFAULT} MB • png/jpg/webp/gif`;
+if (maxHint) maxHint.textContent = `max ${MAX_MB_DEFAULT} MB • png/jpg/webp/gif`;
 
 // --- helpers ---
 function setStatus(msg, kind) {
+  if (!statusEl) return;
   statusEl.classList.remove("error", "ok");
   if (kind) statusEl.classList.add(kind);
   statusEl.textContent = msg || "";
@@ -39,7 +40,6 @@ async function copyToClipboard(text) {
     await navigator.clipboard.writeText(text);
     return true;
   } catch {
-    // fallback
     const ta = document.createElement("textarea");
     ta.value = text;
     document.body.appendChild(ta);
@@ -62,47 +62,104 @@ function validateFile(file) {
 }
 
 function openFilePicker() {
-  fileInput.click();
+  fileInput?.click();
 }
 
 function setDropzoneDrag(active) {
-  dropzone.classList.toggle("is-drag", active);
+  dropzone?.classList.toggle("is-drag", active);
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Lädt Bild in ein <img>.
+ * - Ohne Passwort: <img src> + retry (stabil nach Upload)
+ * - Mit Passwort: fetch + Header + retry
+ */
+async function loadIntoImageElement(id, targetImgEl, password, retries = 6) {
+  const baseUrl = API_BASE + "/" + encodeURIComponent(id);
+  const bust = () => `${baseUrl}?t=${Date.now()}`;
+
+  // Public case: direct image src (no fetch/cors headaches)
+  if (!password) {
+    for (let i = 0; i < retries; i++) {
+      const ok = await new Promise((resolve) => {
+        const onLoad = () => cleanup(true);
+        const onErr = () => cleanup(false);
+        const cleanup = (v) => {
+          targetImgEl.removeEventListener("load", onLoad);
+          targetImgEl.removeEventListener("error", onErr);
+          resolve(v);
+        };
+        targetImgEl.addEventListener("load", onLoad, { once: true });
+        targetImgEl.addEventListener("error", onErr, { once: true });
+
+        targetImgEl.src = bust();
+      });
+
+      if (ok) return;
+      await sleep(350 * (i + 1));
+    }
+    throw new Error("NOT_READY");
+  }
+
+  // Password case: fetch with header
+  for (let i = 0; i < retries; i++) {
+    const r = await fetch(bust(), { headers: { "X-Password": password } });
+
+    if (r.status === 401) throw new Error("PASSWORD_REQUIRED");
+    if (r.ok) {
+      const blob = await r.blob();
+      targetImgEl.src = URL.createObjectURL(blob);
+      return;
+    }
+
+    await sleep(350 * (i + 1));
+  }
+
+  throw new Error("NOT_READY");
 }
 
 // --- drag & drop ---
-["dragenter", "dragover"].forEach((evt) => {
-  dropzone.addEventListener(evt, (e) => {
-    e.preventDefault();
-    setDropzoneDrag(true);
+if (dropzone) {
+  ["dragenter", "dragover"].forEach((evt) => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      setDropzoneDrag(true);
+    });
   });
-});
-["dragleave", "drop"].forEach((evt) => {
-  dropzone.addEventListener(evt, (e) => {
-    e.preventDefault();
-    setDropzoneDrag(false);
+
+  ["dragleave", "drop"].forEach((evt) => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      setDropzoneDrag(false);
+    });
   });
-});
-dropzone.addEventListener("drop", (e) => {
-  const f = e.dataTransfer?.files?.[0];
-  if (f) {
-    fileInput.files = e.dataTransfer.files;
-    setStatus(`bereit: ${f.name} (${Math.round(f.size/1024)} KB)`);
-  }
-});
 
-dropzone.addEventListener("click", openFilePicker);
-dropzone.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" || e.key === " ") openFilePicker();
-});
+  dropzone.addEventListener("drop", (e) => {
+    const f = e.dataTransfer?.files?.[0];
+    if (f && fileInput) {
+      fileInput.files = e.dataTransfer.files;
+      setStatus(`bereit: ${f.name} (${Math.round(f.size / 1024)} KB)`);
+    }
+  });
 
-fileInput.addEventListener("change", () => {
+  dropzone.addEventListener("click", openFilePicker);
+  dropzone.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") openFilePicker();
+  });
+}
+
+fileInput?.addEventListener("change", () => {
   const f = fileInput.files?.[0];
-  if (f) setStatus(`bereit: ${f.name} (${Math.round(f.size/1024)} KB)`);
+  if (f) setStatus(`bereit: ${f.name} (${Math.round(f.size / 1024)} KB)`);
 });
 
 // --- upload ---
-uploadBtn.addEventListener("click", async () => {
-  const file = fileInput.files?.[0];
+uploadBtn?.addEventListener("click", async () => {
+  const file = fileInput?.files?.[0];
   const err = validateFile(file);
   if (err) return setStatus(err, "error");
 
@@ -110,13 +167,14 @@ uploadBtn.addEventListener("click", async () => {
 
   const form = new FormData();
   form.append("file", file);
-  const pw = pwInput.value.trim();
+
+  const pw = (pwInput?.value || "").trim();
   if (pw) form.append("password", pw);
 
   let res;
   try {
     res = await fetch(API_BASE + "/upload", { method: "POST", body: form });
-  } catch (e) {
+  } catch {
     return setStatus("Netzwerkfehler (Worker nicht erreichbar).", "error");
   }
 
@@ -127,24 +185,35 @@ uploadBtn.addEventListener("click", async () => {
 
   const data = await res.json();
   const id = data.id;
+
   const pageUrl = location.origin + "/" + id;
 
   // show result
-  result.hidden = false;
-  viewer.hidden = true;
-  linkEl.href = pageUrl;
-  linkEl.textContent = pageUrl;
+  if (result) result.hidden = false;
+  if (viewer) viewer.hidden = true;
 
-  // push url
+  if (linkEl) {
+    linkEl.href = pageUrl;
+    linkEl.textContent = pageUrl;
+  }
+
+  // keep pretty URL
   history.pushState({}, "", "/" + id);
 
-  // load preview via authenticated fetch (works for password protected too)
-  await loadIntoImageElement(id, img, pw);
-
-  setStatus("done ✓ (auto-delete nach 5 tagen)", "ok");
+  // preview
+  try {
+    await loadIntoImageElement(id, img, pw, 6);
+    setStatus("done ✓ (auto-delete nach 5 tagen)", "ok");
+  } catch (e) {
+    if (e.message === "NOT_READY") {
+      setStatus("done ✓ (preview lädt gleich…)", "ok");
+    } else {
+      setStatus("Upload done, aber preview konnte nicht geladen werden.", "error");
+    }
+  }
 });
 
-// --- copy link ---
+// --- copy link (uploader result) ---
 copyBtn?.addEventListener("click", async () => {
   const url = linkEl?.href || "";
   if (!url) return;
@@ -152,76 +221,88 @@ copyBtn?.addEventListener("click", async () => {
   setStatus(ok ? "link copied ✓" : "copy fehlgeschlagen", ok ? "ok" : "error");
 });
 
-// --- viewer mode (if path contains id) ---
-async function loadIntoImageElement(id, targetImgEl, password) {
-  // use fetch so we can send X-Password header (img src can't)
-  const headers = {};
-  if (password) headers["X-Password"] = password;
-
-  const r = await fetch(API_BASE + "/" + encodeURIComponent(id), { headers });
-  if (r.status === 401) {
-    throw new Error("PASSWORD_REQUIRED");
-  }
-  if (!r.ok) {
-    throw new Error("NOT_FOUND");
-  }
-  const blob = await r.blob();
-  const url = URL.createObjectURL(blob);
-  targetImgEl.src = url;
-}
-
+// --- viewer mode ---
 async function enterViewer(id) {
   // hide uploader result area, show viewer block
-  result.hidden = true;
-  viewer.hidden = false;
+  if (result) result.hidden = true;
+  if (viewer) viewer.hidden = false;
 
   const pageUrl = location.origin + "/" + id;
 
-  viewerHint.textContent = id;
-  copyViewBtn.addEventListener("click", async () => {
-    const ok = await copyToClipboard(pageUrl);
-    setStatus(ok ? "link copied ✓" : "copy fehlgeschlagen", ok ? "ok" : "error");
-  }, { once: true });
+  if (viewerHint) viewerHint.textContent = id;
 
-  // try without password
+  // Copy-Link im Viewer
+  copyViewBtn?.addEventListener(
+    "click",
+    async () => {
+      const ok = await copyToClipboard(pageUrl);
+      setStatus(ok ? "link copied ✓" : "copy fehlgeschlagen", ok ? "ok" : "error");
+    },
+    { once: true }
+  );
+
+  // Erst public versuchen (zeigt Bild sofort, wenn es public ist)
+  setStatus("lade…");
+
+  if (pwWrap) pwWrap.hidden = true;
+  if (unlockBtn) unlockBtn.hidden = true;
+
   try {
-    await loadIntoImageElement(id, imgView, "");
-    pwWrap.hidden = true;
-    unlockBtn.hidden = true;
+    await loadIntoImageElement(id, imgView, "", 6);
     setStatus("", null);
+    return;
   } catch (e) {
+    // Wenn noch nicht “warm”: nicht als Not Found behandeln
+    if (e.message === "NOT_READY") {
+      setStatus("Bild wird noch verteilt… kurz warten oder reload.", "error");
+      // trotzdem Passwort-UI anbieten (falls protected)
+      if (pwWrap) pwWrap.hidden = false;
+      if (unlockBtn) unlockBtn.hidden = false;
+      if (viewerHint) viewerHint.textContent = `${id} • wird geladen…`;
+      return;
+    }
+
+    // Bei Passwortschutz oder echtem Not Found:
+    if (pwWrap) pwWrap.hidden = false;
+    if (unlockBtn) unlockBtn.hidden = false;
+
     if (e.message === "PASSWORD_REQUIRED") {
-      pwWrap.hidden = false;
-      unlockBtn.hidden = false;
-      viewerHint.textContent = `${id} • passwort nötig`;
+      if (viewerHint) viewerHint.textContent = `${id} • passwort nötig`;
       setStatus("Passwort eingeben um das Bild zu laden.", "error");
     } else {
-      viewerHint.textContent = `${id} • not found`;
+      if (viewerHint) viewerHint.textContent = `${id} • not found`;
       setStatus("Nicht gefunden.", "error");
     }
   }
 
-  unlockBtn.addEventListener("click", async () => {
-    const pw = pwView.value.trim();
-    if (!pw) return setStatus("Bitte Passwort eingeben.", "error");
-    setStatus("lade…");
-    try {
-      await loadIntoImageElement(id, imgView, pw);
-      setStatus("ok ✓", "ok");
-    } catch (e) {
-      setStatus("falsches passwort oder not found.", "error");
-    }
-  });
+  // Unlock handler (nur einmal binden)
+  unlockBtn?.addEventListener(
+    "click",
+    async () => {
+      const pw = (pwView?.value || "").trim();
+      if (!pw) return setStatus("Bitte Passwort eingeben.", "error");
+
+      setStatus("lade…");
+      try {
+        await loadIntoImageElement(id, imgView, pw, 6);
+        setStatus("ok ✓", "ok");
+        if (viewerHint) viewerHint.textContent = id;
+      } catch {
+        setStatus("falsches passwort oder not found.", "error");
+      }
+    },
+    { once: true }
+  );
 }
 
+// --- initial route check ---
 (() => {
   const params = new URLSearchParams(location.search);
-  const qid = (params.get("id") || "").trim();     // aus ?id=...
+  const qid = (params.get("id") || "").trim(); // aus ?id=...
   const pid = location.pathname.replace("/", "").trim(); // aus /abc123
-
   const id = qid || pid;
+
   if (!id) return;
 
   enterViewer(id);
 })();
-
