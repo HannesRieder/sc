@@ -1,18 +1,17 @@
 <!doctype html>
-<html lang="de">
+<html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>redirect…</title>
+<meta charset="utf-8">
+<title>redirect</title>
 </head>
 <body>
 <script>
-  // Beispiel: /75c5c1  ->  /?id=75c5c1
-  const path = location.pathname.replace(/^\/+/, ""); // "75c5c1"
-  const qs = new URLSearchParams(location.search);
-  if (path) qs.set("id", path);
-
-  location.replace("/?" + qs.toString());
+  const path = location.pathname.replace(/^\/+/, "");
+  if (path) {
+    location.replace("/?id=" + encodeURIComponent(path));
+  } else {
+    location.replace("/");
+  }
 </script>
 </body>
 </html>
