@@ -214,9 +214,14 @@ async function enterViewer(id) {
   });
 }
 
-// initial route check
 (() => {
-  const id = location.pathname.replace("/", "").trim();
+  const params = new URLSearchParams(location.search);
+  const qid = (params.get("id") || "").trim();     // aus ?id=...
+  const pid = location.pathname.replace("/", "").trim(); // aus /abc123
+
+  const id = qid || pid;
   if (!id) return;
+
   enterViewer(id);
 })();
+
