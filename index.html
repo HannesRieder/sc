@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>sc</title>
+  
+</head>
+<body>
+  <h2>Screenshot Upload</h2>
+  <input type="file" id="file" accept="image/*">
+  <button onclick="upload()">Upload</button>
+
+  <p id="out"></p>
+  <img id="img" style="max-width:100%;margin-top:20px" />
+
+  <script>
+    const API_BASE = "https://sc.hannesrieder.ch";
+
+    async function upload() {
+      const file = document.getElementById("file").files[0];
+      if (!file) return alert("Bitte Bild auswählen");
+
+      const form = new FormData();
+      form.append("file", file);
+
+      const res = await fetch(API_BASE + "/upload", {
+        method: "POST",
+        body: form
+      });
+
+      if (!res.ok) {
+        const t = await res.text();
+        return alert("Upload Fehler: " + t);
+      }
+
+      const data = await res.json();
+      const url = location.origin + "/" + data.id;
+
+      document.getElementById("out").innerHTML =
+        `Link: <a href="${url}">${url}</a>`;
+
+      history.pushState({}, "", "/" + data.id);
+      show(data.id);
+    }
+
+    function show(id) {
+      document.getElementById("img").src = API_BASE + "/" + id;
+    }
+
+    const id = location.pathname.slice(1);
+    if (id) show(id);
+  </script>
+</body>
+</html>
